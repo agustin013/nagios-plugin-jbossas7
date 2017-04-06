@@ -117,6 +117,50 @@ def check_levels(param, warning, critical, message, ok=[]):
         print "CRITICAL - Unexpected value : %d" % param + "; " + message
         return 2
 
+def check_levels_ds(data, warning, critical, message, ok=[]):
+    """
+    Checks error level
+    
+    :param param: input param
+    :param warning: watermark for warning
+    :param critical: watermark for critical
+    :param message: message to be reported to nagios
+    :param ok: watermark for ok level
+    """
+    data = int(data)
+    if (numeric_type(critical) and numeric_type(warning)):
+#	print "data", data
+#	print "critical", critical
+#	print "warning",  warning 
+        if ( data >= critical ):
+            print "CRITICAL - " + message
+            sys.exit(2)
+        elif ( data >= warning ):
+            print "WARNING - " + message
+            sys.exit(1)
+        else:
+            print "OK - " + message
+            sys.exit(0)
+    else:
+#       print "dato no numerico"
+        if  data in critical :
+            print "CRITICAL - " + message
+            sys.exit(2)
+
+        if data in warning:
+            print "WARNING - " + message
+            sys.exit(1)
+
+        if data in ok:
+            print "OK - " + message
+            sys.exit(0)
+
+        #unexpected param value
+        print "CRITICAL - Unexpected value : %d" % data + "; " + message
+        return 2
+
+
+
 
 def get_digest_auth_json(host, port, uri, user, password, payload):
     """
@@ -209,6 +253,7 @@ def main(argv):
     p.add_option('-C', '--critical', action='store', dest='critical', default=None, help='The critical threshold we want to set')
     p.add_option('-A', '--action', action='store', type='choice', dest='action', default='server_status', help='The action you want to take',
                  choices=['server_status', 'heap_usage', 'non_heap_usage', 'eden_space_usage',
+			  'survivor_space_usage',
                           'old_gen_usage', 'perm_gen_usage', 'code_cache_usage', 'gctime',
                           'queue_depth', 'datasource', 'xa_datasource', 'threading'])
     p.add_option('-D', '--perf-data', action='store_true', dest='perf_data', default=False, help='Enable output of Nagios performance data')
@@ -251,6 +296,8 @@ def main(argv):
         return check_non_heap_usage(host, port, user, passwd, warning, critical, perf_data)
     elif action == "eden_space_usage":
         return check_eden_space_usage(host, port, user, passwd, memory_pool, warning, critical, perf_data)
+    elif action == "survivor_space_usage":
+        return check_survivor_space_usage(host, port, user, passwd, memory_pool, warning, critical, perf_data)
     elif action == "old_gen_usage":
         return check_old_gen_usage(host, port, user, passwd, memory_pool, warning, critical, perf_data)
     elif action == "perm_gen_usage":
@@ -388,6 +435,23 @@ def check_eden_space_usage(host, port, user, passwd, memory_pool, warning, criti
     except Exception, e:
         return exit_with_general_critical(e)
 
+def check_survivor_space_usage(host, port, user, passwd, memory_pool, warning, critical, perf_data):
+    warning = warning or 80
+    critical = critical or 90
+
+    try:
+        used_heap = get_memory_pool_usage(host, port, user, passwd, memory_pool, 'used')
+        max_heap = get_memory_pool_usage(host, port, user, passwd, memory_pool, 'max')
+        percent = round((float(used_heap * 100) / max_heap), 2)
+
+        message = "Survivor_space Utilization %sMB of %sMB" % (used_heap, max_heap)
+        message += performance_data(perf_data, [("%.2f%%" % percent, "survivor_space_usage", warning, critical)])
+
+        return check_levels(percent, warning, critical, message)
+    except Exception, e:
+        return exit_with_general_critical(e)
+
+
 def check_old_gen_usage(host, port, user, passwd, memory_pool, warning, critical, perf_data):
     warning = warning or 80
     critical = critical or 90
@@ -518,7 +582,7 @@ def get_datasource_stats(host, port, user, passwd, is_xa, ds_name, ds_stat_type)
             
         payload = {'include-runtime': 'true', 'recursive':'true'}
         if is_xa:
-            url = "/subsystem/datasources/xa-data-source/" + ds_name + "/statistics/pool/"
+            url = "/subsystem/datasources/xa-data-source/" + ds_name + "/statistics=pool/"
         else:
             url = "/subsystem/datasources/data-source/" + ds_name + "/statistics/pool/"
         
@@ -527,21 +591,21 @@ def get_datasource_stats(host, port, user, passwd, is_xa, ds_name, ds_stat_type)
         
         return data
     except Exception, e:
-        return exit_with_general_critical(e)
+        return exit_with_general_critical_ds(e)
 
 
 def check_non_xa_datasource(host, port, user, passwd, ds_name, ds_stat_type, warning, critical, perf_data):
-    warning = warning or 0
-    critical = critical or 10
+    warning = warning or 10
+    critical = critical or 50
     
     try:    
         data = get_datasource_stats(host, port, user, passwd, False, ds_name, ds_stat_type)
         
-        message = "DataSource %s %s" % (ds_stat_type, data)
+        message = "DataSource %s %s %s" % (ds_name, ds_stat_type, data)
         message += performance_data(perf_data, [(data, "datasource", warning, critical)])
-        return check_levels(data, warning, critical, message)
+        return check_levels_ds(data, warning, critical, message)
     except Exception, e:
-        return exit_with_general_critical(e)
+        return exit_with_general_critical_ds(e)
 
 def check_xa_datasource(host, port, user, passwd, ds_name, ds_stat_type, warning, critical, perf_data):
     warning = warning or 0
